@@ -25,7 +25,7 @@ error()   { echo -e "${RED}✗${RESET} $*" >&2; }
 header()  { echo -e "\n${BOLD}$*${RESET}"; }
 
 # ── Config ────────────────────────────────────────────────────────────────────
-REPO_URL="https://github.com/GITHUB_USER/claude-limits.git"
+REPO_URL="https://github.com/DimaNeskorodiev/claude-limits.git"
 INSTALL_DIR="$HOME/Library/Application Support/ClaudeLimits"
 PLIST_LABEL="com.claude.limits.widget"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"

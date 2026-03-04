@@ -33,7 +33,7 @@
 Open **Terminal** and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/GITHUB_USER/claude-limits/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DimaNeskorodiev/claude-limits/main/install.sh | bash
 ```
 
 The installer will:
@@ -85,7 +85,7 @@ The popover also shows **weekly** (7-day) usage and the next reset time.
 
 ```bash
 # Clone the repo
-git clone https://github.com/GITHUB_USER/claude-limits.git
+git clone https://github.com/DimaNeskorodiev/claude-limits.git
 cd claude-limits
 
 # Install Python dependencies
@@ -105,7 +105,7 @@ bash install.sh
 Re-run the one-liner — it will pull the latest version and restart the widget:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/GITHUB_USER/claude-limits/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DimaNeskorodiev/claude-limits/main/install.sh | bash
 ```
 
 ---
