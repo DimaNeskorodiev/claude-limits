@@ -128,7 +128,7 @@ POPUP_H        = 230
 SETUP_W        = 500
 SETUP_H        = 480
 BASE_URL       = "https://claude.ai"
-APP_VERSION    = "1.0.0"
+APP_VERSION    = "1.0.10"
 
 # ── Icon colour endpoints (SRGB 0-1) ─────────────────────────────────────────
 _ICON_DARK_0   = (1.0,   1.0,   1.0  )   # white — 0% usage in dark mode
@@ -764,15 +764,16 @@ def _make_status_icon(session_pct: float) -> NSImage:
     22×22 menu-bar icon drawn entirely with lockFocus (always works):
       • thin circular ring track (full circle, dim)
       • coloured progress arc, clockwise from 12-o'clock, proportion = session_pct
-      • small Claude star glyph rendered in the upper half via SVG sub-image
-      • percentage text centred in the lower half
-    Colour interpolates: white/dark-grey (0%) → #D97757 orange (100%).
+      • percentage text centred inside the ring
+    Colour stays white/dark-grey below 50%; interpolates to #D97757 orange above 50%.
     """
     SIZE   = 22.0
     t      = max(0.0, min(100.0, float(session_pct))) / 100.0
     dark   = _is_dark_mode()
     c0     = _ICON_DARK_0 if dark else _ICON_LIGHT_0
-    ri, gi, bi = _lerp_color(t, c0, _ICON_FULL)
+    # Only start colour-shifting after 50% — remap [0.5, 1.0] → [0.0, 1.0]
+    t_color    = max(0.0, (t - 0.5) * 2.0)
+    ri, gi, bi = _lerp_color(t_color, c0, _ICON_FULL)
     fg         = _nscolor((ri, gi, bi, 1.0))
     hex_col    = "#{:02X}{:02X}{:02X}".format(int(ri * 255), int(gi * 255), int(bi * 255))
 
@@ -811,50 +812,12 @@ def _make_status_icon(session_pct: float) -> NSImage:
         fg.setStroke()
         arc.stroke()
 
-    # ── Claude star glyph: small, pinned to the top of the ring interior ────
-    # Reduce star to leave most vertical space for the large percentage number
-    STAR  = 5.5
-    sx    = cx - STAR / 2.0
-    # In Cocoa coords y=0=bottom; cy=11; placing star at cy+1.5 puts it
-    # in the upper screen half (y≈13 → y≈18.5 on screen).
-    sy    = cy + 1.5
-
-    svg_bytes = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-        f'width="{STAR}" height="{STAR}">'
-        f'<path fill="{hex_col}" fill-rule="nonzero" d="{_CLAUDE_SVG_PATH}"/>'
-        f'</svg>'
-    ).encode("utf-8")
-
-    star_drawn = False
-    try:
-        d  = NSData.dataWithBytes_length_(svg_bytes, len(svg_bytes))
-        si = NSImage.alloc().initWithData_(d)
-        if si is not None:
-            si.setSize_(NSSize(STAR, STAR))
-            si.drawInRect_fromRect_operation_fraction_(
-                NSMakeRect(sx, sy, STAR, STAR),
-                NSMakeRect(0, 0, STAR, STAR),
-                2,     # NSCompositeSourceOver
-                1.0,
-            )
-            star_drawn = True
-    except Exception:
-        pass
-
-    if not star_drawn:
-        # Fallback: small filled oval in the upper half
-        fg.setFill()
-        NSBezierPath.bezierPathWithOvalInRect_(
-            NSMakeRect(sx + 1.0, sy + 1.0, STAR - 2.0, STAR - 2.0)
-        ).fill()
-
-    # ── Percentage text: large, centred, lower portion of ring ────────────
-    # Font size is scaled by string length so the number always fits inside
-    # the ring interior (≈16 pt wide clear area).
+    # ── Percentage text: centred inside the ring ──────────────────────────
+    # Font size is scaled by string length so the number fits inside
+    # the ring interior (≈16 pt wide clear area) without overlapping the stroke.
     pct_str   = f"{int(session_pct)}%"
     n         = len(pct_str)
-    font_size = 7.5 if n >= 4 else (8.5 if n == 3 else 9.5)
+    font_size = 5.5 if n >= 4 else (6.5 if n == 3 else 7.5)
     font      = NSFont.boldSystemFontOfSize_(font_size)
     attrs     = {
         NSFontAttributeName:            font,
@@ -863,8 +826,8 @@ def _make_status_icon(session_pct: float) -> NSImage:
     astr = NSAttributedString.alloc().initWithString_attributes_(pct_str, attrs)
     sz   = astr.size()
     astr.drawAtPoint_(NSPoint(
-        (SIZE - sz.width) / 2.0,
-        1.5,    # near bottom of ring interior
+        (SIZE - sz.width)  / 2.0,
+        (SIZE - sz.height) / 2.0,   # vertically centred in the ring
     ))
 
     img.unlockFocus()
