@@ -130,13 +130,9 @@ SETUP_H        = 480
 BASE_URL       = "https://claude.ai"
 APP_VERSION    = "1.0.16"
 
-# ── Icon colour endpoints (SRGB 0-1) ─────────────────────────────────────────
-# Base colour is resolved at draw time from NSColor.labelColor() so it always
-# matches the system menu bar (black in light, white in dark, auto for any tint).
-# These tuples are fallbacks only, used if the dynamic colour cannot be extracted.
-_ICON_BASE_DARK  = (1.0, 1.0, 1.0)          # white  — dark-mode fallback
-_ICON_BASE_LIGHT = (0.0, 0.0, 0.0)          # black  — light-mode fallback
-_ICON_FULL       = (0.851, 0.467, 0.341)    # #D97757 orange — 100% usage
+# Icon drawing uses NSImage template mode — no colour constants needed.
+# Template images are drawn in black/alpha; macOS composites them in the
+# correct colour for every menu-bar state (light, dark, fullscreen, tinted).
 
 # Claude star glyph path (viewBox 0 0 24 24)
 _CLAUDE_SVG_PATH = (
@@ -179,22 +175,6 @@ def _nscolor(rgba):
     r, g, b, a = rgba
     return NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, a)
 
-
-def _is_dark_mode() -> bool:
-    """Return True when the system is currently in dark mode."""
-    try:
-        from AppKit import NSAppearanceNameAqua, NSAppearanceNameDarkAqua
-        names = [NSAppearanceNameAqua, NSAppearanceNameDarkAqua]
-        best  = NSAppearance.currentAppearance().bestMatchFromAppearancesWithNames_(names)
-        return best == NSAppearanceNameDarkAqua
-    except Exception:
-        return True  # safe default: dark
-
-
-def _lerp_color(t: float, c0: tuple, c1: tuple) -> tuple:
-    """Linearly interpolate between two RGB 3-tuples. t in [0, 1]."""
-    t = max(0.0, min(1.0, t))
-    return tuple(c0[i] + (c1[i] - c0[i]) * t for i in range(3))
 
 
 def _mask_session_key(raw: str) -> str:
@@ -764,76 +744,62 @@ class RoundedProgressBar(NSView):
 # ── Status bar icon ───────────────────────────────────────────────────────────
 def _make_status_icon(session_pct: float) -> NSImage:
     """
-    22×22 menu-bar icon drawn entirely with lockFocus (always works):
-      • thin circular ring track (full circle, dim)
-      • coloured progress arc, clockwise from 12-o'clock, proportion = session_pct
-      • percentage text centred inside the ring
+    22×22 menu-bar icon drawn as a macOS TEMPLATE IMAGE.
 
-    Base colour is resolved from NSColor.labelColor() so it is always
-    legible regardless of light/dark mode, menu-bar background tint, or
-    "Reduce Transparency" setting.  Colour only shifts toward #D97757
-    orange after 50% usage.
+    Template mode (img.setTemplate_(True)) is the Apple-recommended approach
+    for menu-bar icons.  macOS uses only the alpha channel as a mask and
+    composites the icon in the correct colour for every possible menu-bar
+    state: light mode, dark mode, full-screen dark header, wallpaper tinting,
+    high-contrast, and the active (clicked) state.  This matches the exact
+    behaviour of every first-party macOS status-bar icon.
+
+    Visual elements:
+      • ring track  — full circle at 30% opacity (subtle background)
+      • progress arc — clockwise from 12-o'clock; full opacity;
+                       stroke widens slightly above 50% for visual emphasis
+      • percentage text — centred inside the ring, full opacity
     """
     SIZE  = 22.0
     t     = max(0.0, min(100.0, float(session_pct))) / 100.0
 
     img = NSImage.alloc().initWithSize_(NSSize(SIZE, SIZE))
+    # KEY: declare as template BEFORE lockFocus so macOS knows to handle
+    # colour compositing for all menu-bar states automatically.
+    img.setTemplate_(True)
     img.lockFocus()
     NSColor.clearColor().set()
     NSBezierPath.fillRect_(NSMakeRect(0, 0, SIZE, SIZE))
 
-    # ── Resolve base colour from system semantic colour ────────────────────
-    # NSColor.labelColor() is automatically black in light mode, white in
-    # dark mode, and adapts to any menu-bar style (coloured, inverted, etc.).
-    # Extract RGB inside lockFocus so the correct graphics context is active.
-    try:
-        label = NSColor.labelColor()
-        # Try modern API first; fall back to legacy string-based name
-        try:
-            from AppKit import NSColorSpace as _NCS
-            label_rgb = label.colorUsingColorSpace_(_NCS.deviceRGBColorSpace())
-        except Exception:
-            label_rgb = label.colorUsingColorSpaceName_("NSCalibratedRGBColorSpace")
-        if label_rgb is None:
-            raise ValueError("nil")
-        base_rgb = (label_rgb.redComponent(),
-                    label_rgb.greenComponent(),
-                    label_rgb.blueComponent())
-    except Exception:
-        dark     = _is_dark_mode()
-        base_rgb = _ICON_BASE_DARK if dark else _ICON_BASE_LIGHT
-
-    # Only shift toward orange after 50% — remap [0.5, 1.0] → [0.0, 1.0]
-    t_color    = max(0.0, (t - 0.5) * 2.0)
-    ri, gi, bi = _lerp_color(t_color, base_rgb, _ICON_FULL)
-    fg         = _nscolor((ri, gi, bi, 1.0))
+    # All drawing is in black — template mode converts this to white/black/tinted
+    # automatically depending on the current menu-bar appearance.
+    BLACK = NSColor.blackColor()
 
     cx, cy = SIZE / 2.0, SIZE / 2.0   # (11, 11)
     RING_R = SIZE / 2.0 - 1.5         # 9.5 pt radius
-    RING_W = 1.5
 
-    # ── Track: full circle using labelColor at low opacity ─────────────────
-    # labelColor ensures the track is visible on any menu-bar background.
-    NSColor.labelColor().colorWithAlphaComponent_(0.25).setStroke()
+    # ── Track: full circle at 30% opacity ─────────────────────────────────
+    BLACK.colorWithAlphaComponent_(0.30).setStroke()
     oval = NSBezierPath.bezierPathWithOvalInRect_(
         NSMakeRect(cx - RING_R, cy - RING_R, RING_R * 2, RING_R * 2)
     )
-    oval.setLineWidth_(RING_W)
+    oval.setLineWidth_(1.5)
     oval.stroke()
 
-    # ── Progress arc: clockwise from 12-o'clock ────────────────────────────
+    # ── Progress arc: clockwise from 12-o'clock, full opacity ─────────────
     if t > 0.005:
-        end_deg = 90.0 - t * 360.0
+        end_deg  = 90.0 - t * 360.0
+        # Slightly thicker arc above 50% to give extra visual weight
+        arc_w    = 2.0 if t >= 0.5 else 1.5
         arc = NSBezierPath.bezierPath()
         arc.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise_(
             NSPoint(cx, cy), RING_R, 90.0, end_deg, True
         )
-        arc.setLineWidth_(RING_W)
+        arc.setLineWidth_(arc_w)
         try:
             arc.setLineCapStyle_(1)   # NSLineCapStyleRound
         except Exception:
             pass
-        fg.setStroke()
+        BLACK.setStroke()
         arc.stroke()
 
     # ── Percentage text: centred inside the ring ──────────────────────────
@@ -843,7 +809,7 @@ def _make_status_icon(session_pct: float) -> NSImage:
     font      = NSFont.boldSystemFontOfSize_(font_size)
     attrs     = {
         NSFontAttributeName:            font,
-        NSForegroundColorAttributeName: fg,
+        NSForegroundColorAttributeName: BLACK,
     }
     astr = NSAttributedString.alloc().initWithString_attributes_(pct_str, attrs)
     sz   = astr.size()
