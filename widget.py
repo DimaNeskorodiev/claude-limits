@@ -131,9 +131,12 @@ BASE_URL       = "https://claude.ai"
 APP_VERSION    = "1.0.14"
 
 # ── Icon colour endpoints (SRGB 0-1) ─────────────────────────────────────────
-_ICON_DARK_0   = (1.0,   1.0,   1.0  )   # white — 0% usage in dark mode
-_ICON_LIGHT_0  = (0.267, 0.267, 0.267)   # dark grey — 0% usage in light mode
-_ICON_FULL     = (0.851, 0.467, 0.341)   # #D97757 orange — 100% usage
+# Base colour is resolved at draw time from NSColor.labelColor() so it always
+# matches the system menu bar (black in light, white in dark, auto for any tint).
+# These tuples are fallbacks only, used if the dynamic colour cannot be extracted.
+_ICON_BASE_DARK  = (1.0, 1.0, 1.0)          # white  — dark-mode fallback
+_ICON_BASE_LIGHT = (0.0, 0.0, 0.0)          # black  — light-mode fallback
+_ICON_FULL       = (0.851, 0.467, 0.341)    # #D97757 orange — 100% usage
 
 # Claude star glyph path (viewBox 0 0 24 24)
 _CLAUDE_SVG_PATH = (
@@ -765,39 +768,60 @@ def _make_status_icon(session_pct: float) -> NSImage:
       • thin circular ring track (full circle, dim)
       • coloured progress arc, clockwise from 12-o'clock, proportion = session_pct
       • percentage text centred inside the ring
-    Colour stays white/dark-grey below 50%; interpolates to #D97757 orange above 50%.
+
+    Base colour is resolved from NSColor.labelColor() so it is always
+    legible regardless of light/dark mode, menu-bar background tint, or
+    "Reduce Transparency" setting.  Colour only shifts toward #D97757
+    orange after 50% usage.
     """
-    SIZE   = 22.0
-    t      = max(0.0, min(100.0, float(session_pct))) / 100.0
-    dark   = _is_dark_mode()
-    c0     = _ICON_DARK_0 if dark else _ICON_LIGHT_0
-    # Only start colour-shifting after 50% — remap [0.5, 1.0] → [0.0, 1.0]
-    t_color    = max(0.0, (t - 0.5) * 2.0)
-    ri, gi, bi = _lerp_color(t_color, c0, _ICON_FULL)
-    fg         = _nscolor((ri, gi, bi, 1.0))
-    hex_col    = "#{:02X}{:02X}{:02X}".format(int(ri * 255), int(gi * 255), int(bi * 255))
+    SIZE  = 22.0
+    t     = max(0.0, min(100.0, float(session_pct))) / 100.0
 
     img = NSImage.alloc().initWithSize_(NSSize(SIZE, SIZE))
     img.lockFocus()
     NSColor.clearColor().set()
     NSBezierPath.fillRect_(NSMakeRect(0, 0, SIZE, SIZE))
 
-    cx, cy  = SIZE / 2.0, SIZE / 2.0   # (11, 11)
-    RING_R  = SIZE / 2.0 - 1.5         # 9.5 pt radius (leaves 1.5 pt margin)
-    RING_W  = 1.5
+    # ── Resolve base colour from system semantic colour ────────────────────
+    # NSColor.labelColor() is automatically black in light mode, white in
+    # dark mode, and adapts to any menu-bar style (coloured, inverted, etc.).
+    # Extract RGB inside lockFocus so the correct graphics context is active.
+    try:
+        label = NSColor.labelColor()
+        # Try modern API first; fall back to legacy string-based name
+        try:
+            from AppKit import NSColorSpace as _NCS
+            label_rgb = label.colorUsingColorSpace_(_NCS.deviceRGBColorSpace())
+        except Exception:
+            label_rgb = label.colorUsingColorSpaceName_("NSCalibratedRGBColorSpace")
+        if label_rgb is None:
+            raise ValueError("nil")
+        base_rgb = (label_rgb.redComponent(),
+                    label_rgb.greenComponent(),
+                    label_rgb.blueComponent())
+    except Exception:
+        dark     = _is_dark_mode()
+        base_rgb = _ICON_BASE_DARK if dark else _ICON_BASE_LIGHT
 
-    # ── Track: full circle, dim ────────────────────────────────────────────
-    tr_c = NSColor.colorWithWhite_alpha_(0.6 if dark else 0.0,
-                                         0.28 if dark else 0.18)
+    # Only shift toward orange after 50% — remap [0.5, 1.0] → [0.0, 1.0]
+    t_color    = max(0.0, (t - 0.5) * 2.0)
+    ri, gi, bi = _lerp_color(t_color, base_rgb, _ICON_FULL)
+    fg         = _nscolor((ri, gi, bi, 1.0))
+
+    cx, cy = SIZE / 2.0, SIZE / 2.0   # (11, 11)
+    RING_R = SIZE / 2.0 - 1.5         # 9.5 pt radius
+    RING_W = 1.5
+
+    # ── Track: full circle using labelColor at low opacity ─────────────────
+    # labelColor ensures the track is visible on any menu-bar background.
+    NSColor.labelColor().colorWithAlphaComponent_(0.25).setStroke()
     oval = NSBezierPath.bezierPathWithOvalInRect_(
         NSMakeRect(cx - RING_R, cy - RING_R, RING_R * 2, RING_R * 2)
     )
     oval.setLineWidth_(RING_W)
-    tr_c.setStroke()
     oval.stroke()
 
     # ── Progress arc: clockwise from 12-o'clock ────────────────────────────
-    # In Cocoa: 90° = top; clockwise = decreasing angle
     if t > 0.005:
         end_deg = 90.0 - t * 360.0
         arc = NSBezierPath.bezierPath()
@@ -813,8 +837,6 @@ def _make_status_icon(session_pct: float) -> NSImage:
         arc.stroke()
 
     # ── Percentage text: centred inside the ring ──────────────────────────
-    # Font size is scaled by string length so the number fits inside
-    # the ring interior (≈16 pt wide clear area) without overlapping the stroke.
     pct_str   = f"{int(session_pct)}%"
     n         = len(pct_str)
     font_size = 5.5 if n >= 4 else (6.5 if n == 3 else 7.5)
@@ -827,7 +849,7 @@ def _make_status_icon(session_pct: float) -> NSImage:
     sz   = astr.size()
     astr.drawAtPoint_(NSPoint(
         (SIZE - sz.width)  / 2.0,
-        (SIZE - sz.height) / 2.0,   # vertically centred in the ring
+        (SIZE - sz.height) / 2.0,
     ))
 
     img.unlockFocus()
