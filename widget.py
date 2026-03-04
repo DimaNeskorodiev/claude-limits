@@ -128,7 +128,7 @@ POPUP_H        = 230
 SETUP_W        = 500
 SETUP_H        = 480
 BASE_URL       = "https://claude.ai"
-APP_VERSION    = "1.0.10"
+APP_VERSION    = "1.0.11"
 
 # ── Icon colour endpoints (SRGB 0-1) ─────────────────────────────────────────
 _ICON_DARK_0   = (1.0,   1.0,   1.0  )   # white — 0% usage in dark mode
