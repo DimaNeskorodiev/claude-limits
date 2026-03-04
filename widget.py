@@ -1333,6 +1333,12 @@ class AppDelegate(NSObject):
         # Hide from Dock — this is a menu bar only app
         app.setActivationPolicy_(_POLICY_ACCESSORY)
 
+        # Build a minimal main menu so that Cmd+V / Cmd+C / Cmd+A etc. are
+        # dispatched to NSTextView first-responders in the Settings panel.
+        # Without an Edit submenu the system has no key-equivalent table to
+        # consult and all editing shortcuts are silently swallowed.
+        self._build_main_menu(app)
+
         # State
         self._cfg              = self._load_cfg()
         self._api              = None
@@ -1448,6 +1454,52 @@ class AppDelegate(NSObject):
         """Called when the system switches between dark and light mode."""
         # Redraw the status bar icon with the last-known usage %
         self._item.button().setImage_(_make_status_icon(self._last_session_pct))
+
+    @objc.python_method
+    def _build_main_menu(self, app):
+        """
+        Install a minimal NSApplication main menu containing an Edit submenu.
+        This is required for Cmd+V / Cmd+C / Cmd+X / Cmd+A / Cmd+Z to be
+        dispatched as key-equivalents to any NSTextView first-responder.
+        Without it the system has no key-equivalent table and all shortcuts
+        are silently swallowed, even when the app is the active foreground app.
+        """
+        main_menu = NSMenu.alloc().init()
+
+        # ── Apple / app menu (index 0 — title is ignored by macOS) ────────
+        app_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Apple", "", ""
+        )
+        app_menu = NSMenu.alloc().init()
+        app_item.setSubmenu_(app_menu)
+        main_menu.addItem_(app_item)
+
+        # ── Edit menu ──────────────────────────────────────────────────────
+        edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Edit", "", ""
+        )
+        edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+        for title, action, key in [
+            ("Undo",       "undo:",      "z"),
+            ("Redo",       "redo:",      "Z"),
+            ("-", None, None),
+            ("Cut",        "cut:",       "x"),
+            ("Copy",       "copy:",      "c"),
+            ("Paste",      "paste:",     "v"),
+            ("Select All", "selectAll:", "a"),
+        ]:
+            if title == "-":
+                edit_menu.addItem_(NSMenuItem.separatorItem())
+            else:
+                edit_menu.addItem_(
+                    NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                        title, action, key
+                    )
+                )
+        edit_item.setSubmenu_(edit_menu)
+        main_menu.addItem_(edit_item)
+
+        app.setMainMenu_(main_menu)
 
     # ── Config ────────────────────────────────────────────────────────────
     @objc.python_method
