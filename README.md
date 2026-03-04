@@ -1,6 +1,8 @@
 # Claude Limits Widget
 
 > A lightweight macOS menu bar widget that **monitors your Claude API usage in real time**. Glance at the menu bar icon to see how much of your 5-hour session quota you've used, or click to see exact percentages, weekly usage, and time until reset. Never run out of tokens unexpectedly.
+> <img width="286" height="273" alt="image" src="https://github.com/user-attachments/assets/d78ddc72-f8e8-476e-8e1e-a0e32ba51d47" />
+
 
 ---
 
