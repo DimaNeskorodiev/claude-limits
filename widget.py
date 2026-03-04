@@ -128,7 +128,7 @@ POPUP_H        = 230
 SETUP_W        = 500
 SETUP_H        = 480
 BASE_URL       = "https://claude.ai"
-APP_VERSION    = "1.0.16"
+APP_VERSION    = "1.0.17"
 
 # Icon drawing uses NSImage template mode — no colour constants needed.
 # Template images are drawn in black/alpha; macOS composites them in the
