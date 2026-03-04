@@ -1278,18 +1278,14 @@ class SetupWindowController(NSObject):
         close_btn.setAction_("onCancel:")
         c.addSubview_(close_btn)
 
-        # Temporarily promote to regular app so the panel can receive keyboard events.
-        # Menu-bar-only (accessory) apps don't get keyboard routing by default.
+        # Activate the app before making the panel key so that keyboard events
+        # are routed correctly. Order matters: activate → makeKey → firstResponder.
+        # No policy switch needed — NSApplicationActivationPolicyAccessory apps
+        # can receive full keyboard input as long as they are properly activated.
         app = NSApplication.sharedApplication()
-        app.setActivationPolicy_(0)          # NSApplicationActivationPolicyRegular
-        app.activateIgnoringOtherApps_(True) # bring app to front BEFORE making key
+        app.activateIgnoringOtherApps_(True)
         self._panel.makeKeyAndOrderFront_(None)
-        self._panel.makeFirstResponder_(self._tv)  # put cursor straight into the field
-
-    @objc.python_method
-    def _restore_accessory_policy(self):
-        """Switch back to menu-bar-only mode after the settings panel closes."""
-        NSApplication.sharedApplication().setActivationPolicy_(_POLICY_ACCESSORY)
+        self._panel.makeFirstResponder_(self._tv)
 
     def onCancel_(self, sender):
         # Cancel any pending performSelector:afterDelay: (e.g. finishSave:) before
@@ -1297,7 +1293,6 @@ class SetupWindowController(NSObject):
         NSObject.cancelPreviousPerformRequestsWithTarget_(self)
         self._panel.close()
         SetupWindowController._instance = None
-        self._restore_accessory_policy()
 
     def onCopyKey_(self, sender):
         raw = getattr(self, '_current_cookie', '')
@@ -1315,7 +1310,6 @@ class SetupWindowController(NSObject):
         NSObject.cancelPreviousPerformRequestsWithTarget_(self)
         self._panel.close()
         SetupWindowController._instance = None
-        self._restore_accessory_policy()
         cb = getattr(self, '_on_disconnect_cb', None)
         if cb:
             cb()
@@ -1378,7 +1372,6 @@ class SetupWindowController(NSObject):
         self._on_save_cb(self._save_raw)
         self._panel.close()
         SetupWindowController._instance = None
-        self._restore_accessory_policy()
 
 
 # ── App delegate ──────────────────────────────────────────────────────────────
