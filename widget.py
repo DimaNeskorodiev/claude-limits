@@ -5,6 +5,7 @@ Shows current-session and weekly token usage pulled from claude.ai.
 Click the status bar icon to open the Liquid Glass usage panel.
 """
 
+import fcntl
 import os
 import subprocess
 import tempfile
@@ -111,6 +112,7 @@ except (ImportError, AttributeError):
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE    = Path.home() / ".claude_widget_config.json"
 LOG_FILE       = Path.home() / ".claude_widget_debug.log"
+LOCK_FILE      = Path(tempfile.gettempdir()) / "claude_widget.lock"
 PLIST_LABEL    = "com.claude.limits.widget"
 PLIST_PATH     = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
 REFRESH_SEC    = 60
@@ -254,6 +256,30 @@ def _toggle_autostart() -> bool:
         subprocess.run(["launchctl", "load", str(PLIST_PATH)],
                        capture_output=True)
         return True
+
+
+# ── Single-instance lock ──────────────────────────────────────────────────────
+_lock_fh = None   # kept alive for the process lifetime so the lock is held
+
+def _acquire_instance_lock() -> bool:
+    """
+    Try to grab an exclusive flock on LOCK_FILE.
+    Returns True  → this is the only running instance (proceed normally).
+    Returns False → another instance already holds the lock (exit immediately).
+    The OS releases the lock automatically when the process exits, even on crash,
+    so no manual cleanup is ever needed.
+    """
+    global _lock_fh
+    _lock_fh = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_fh.write(str(os.getpid()))
+        _lock_fh.flush()
+        return True
+    except OSError:
+        _lock_fh.close()
+        _lock_fh = None
+        return False
 
 
 # ── Debug log ─────────────────────────────────────────────────────────────────
@@ -1729,6 +1755,11 @@ def _start_local_api():
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # ── Single-instance guard (must be first) ─────────────────────────────
+    if not _acquire_instance_lock():
+        print("Claude Limits Widget is already running. Exiting.")
+        sys.exit(0)
+
     _init_log_file()   # lock down log file permissions before first write
     # S-1: also lock down the config file if it already exists at wrong permissions
     try:
