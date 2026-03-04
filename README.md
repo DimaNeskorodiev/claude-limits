@@ -1,30 +1,33 @@
 # Claude Limits Widget
 
-> A lightweight macOS menu bar app that shows your **Claude AI usage** in real time — session percentage, weekly usage, and time until reset — right from your menu bar.
+> A lightweight macOS menu bar widget that **monitors your Claude API usage in real time**. Glance at the menu bar icon to see how much of your 5-hour session quota you've used, or click to see exact percentages, weekly usage, and time until reset. Never run out of tokens unexpectedly.
 
 ---
 
 ## Features
 
-- **Live usage ring** — circular progress arc in the menu bar updates every 30 s
-- **Color-coded** — fades from white → orange as you approach your limit
-- **Popover panel** — click the icon to see current session %, weekly %, and reset time
-- **Auto dark/light mode** — adapts instantly when you switch macOS themes
-- **Auto-start at login** — installed as a native macOS LaunchAgent
-- **Simple setup** — paste your Claude session cookie once; the widget handles the rest
+- **Live usage indicator** — circular progress ring in the menu bar; updates every 30 seconds. Glance to see how much of your 5-hour session quota remains
+- **Session & weekly tracking** — click the icon to see your current session % (5-hour window), 7-day usage %, and exact reset time
+- **Always visible** — uses macOS template images; the icon automatically adapts to light mode, dark mode, full-screen apps, wallpaper tinting, and even the "active/clicked" state
+- **Token visibility** — know exactly how much capacity you have left before your session resets, so you can plan longer tasks or break them up as needed
+- **Auto-start at login** — installs as a native macOS LaunchAgent; runs in the background silently
+- **Zero setup friction** — one-command installer; just paste your Claude session cookie once
 
 ---
 
 ## Requirements
 
-| Requirement | Minimum |
+| Requirement | Details |
 |---|---|
-| macOS | 12 Monterey or later |
-| Python | 3.9 or later |
-| Claude plan | Any (Pro / Team / Enterprise) |
+| **macOS** | 12 Monterey or later |
+| **Python** | 3.9 or later (pre-installed on most Macs) |
+| **Claude account** | Free, Pro, Team, or Enterprise (all have 5-hour session limits) |
 
-> **Python not installed?**
-> `brew install python` or download from [python.org](https://www.python.org/downloads/)
+**Don't have Python?**
+```bash
+brew install python
+```
+Or download from [python.org](https://www.python.org/downloads/)
 
 ---
 
@@ -47,37 +50,57 @@ The installer will:
 
 ## First-time setup
 
-After installation, a small icon appears in your menu bar:
-
-1. **Click the icon** → popover opens
-2. **Click the gear ⚙️** → Settings panel opens
-3. **Paste your Claude session cookie** (see below)
-4. Click **Connect** — the icon starts showing live data
+**After installation:**
+1. A small icon appears in your menu bar (top-right of screen)
+2. **Click the icon** to open the usage popover
+3. **Click the gear ⚙️** button to open Settings
+4. **Paste your Claude session cookie** (see "Getting your session cookie" below)
+5. Click **Connect** — usage data loads instantly
 
 ### Getting your session cookie
 
-1. Open [claude.ai](https://claude.ai) in Safari or Chrome
-2. Open DevTools → **Application** tab → **Cookies** → `https://claude.ai`
-3. Find the cookie named **`sessionKey`**
-4. Copy its **Value** and paste it into the widget's Settings panel
+The widget needs your Claude session key to check your usage. Here's how to find it:
 
-> The cookie is stored **locally only** (`~/.claude_limits_config.json`).
-> It is never sent anywhere except Claude's own API.
+1. Open [claude.ai](https://claude.ai) in your web browser
+2. Open **Developer Tools** (press `Cmd+Option+I` on Mac)
+3. Go to the **Application** tab → **Cookies** section (left sidebar)
+4. Click on `https://claude.ai` in the domain list
+5. Find the cookie named **`sessionKey`** (or **`next-auth.session-token`**)
+6. Copy its **Value** (the long string)
+7. Paste it into the widget's Settings panel and click **Connect**
+
+**Privacy note:**
+- Your session cookie is stored **locally only** on your Mac (`~/.claude_limits_config.json`), readable only by you
+- The widget only sends API requests to `claude.ai` using your cookie; it never shares data with third parties or our servers
+- To revoke access, simply disconnect in the widget or delete your session on claude.ai
 
 ---
 
 ## Usage
 
-| Action | Result |
-|---|---|
-| **Click menu bar icon** | Open usage popover |
-| **Click gear ⚙️** in popover | Open Settings |
-| **Copy Key** button | Copy masked session key to clipboard |
-| **Disconnect** button | Remove stored session, stop fetching |
-| **Open claude.ai ↗** | Open Claude in your browser |
+**Menu bar icon:**
+The circular progress ring shows your **current 5-hour session usage**. At a glance:
+- Empty ring (0%) = fresh session, plenty of tokens available
+- Half-filled ring (50%) = you're at the midpoint; plan accordingly if you have a large task
+- Nearly full ring (90%+) = nearing your session limit; upcoming task might hit the reset window
 
-The icon ring shows your **current 5-hour session** usage.
-The popover also shows **weekly** (7-day) usage and the next reset time.
+**Click the icon to open the popover and see:**
+
+| Metric | Meaning |
+|---|---|
+| **Current session %** | How much of your 5-hour rolling window you've consumed |
+| **Weekly %** | How much of your 7-day total limit you've used (Pro/Team/Enterprise plans) |
+| **Time until reset** | When your current session window expires and resets to 0% |
+
+| Button | Action |
+|---|---|
+| **Gear ⚙️** | Open Settings to manage or change your session cookie |
+| **Copy Key** | Copy your masked session ID to clipboard (for reference/debugging) |
+| **Disconnect** | Remove your stored session and stop monitoring usage |
+| **Open claude.ai ↗** | Jump directly to claude.ai in your browser |
+
+**Why this matters:**
+Claude API and web usage share the same session window. If you're near your 5-hour limit, starting a long task might be interrupted. This widget lets you check instantly from your menu bar — no need to open Claude or dig through the UI.
 
 ---
 
@@ -145,11 +168,20 @@ pip3 install pyobjc-framework-Cocoa curl_cffi requests
 
 ---
 
-## Privacy
+## Privacy & Security
 
-- **No data leaves your machine** except API calls to `claude.ai` using your own session cookie
-- The session cookie is stored in `~/.claude_limits_config.json` (readable only by you)
-- No analytics, no telemetry, no third-party services
+✅ **Your data stays on your Mac**
+- The session cookie is stored locally in `~/.claude_limits_config.json`, encrypted for your user only
+- Usage data is fetched directly from `claude.ai` API using your own session cookie
+- No data is sent to our servers, third-party analytics, or ad networks
+
+✅ **Transparent & open**
+- This is free, open-source software under the MIT license
+- You can review the source code to see exactly what requests are made
+
+✅ **Revoke access anytime**
+- Click "Disconnect" in Settings to forget your session cookie immediately
+- Or log out of claude.ai to invalidate your session token globally
 
 ---
 
