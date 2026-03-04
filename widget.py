@@ -12,6 +12,7 @@ import tempfile
 import threading
 import json
 import sys
+import urllib.request
 from pathlib import Path
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -49,6 +50,7 @@ try:
         NSBezelStyleRounded,
         NSImageView, NSPasteboard,
         NSMenu, NSMenuItem,
+        NSAlert,
     )
     from AppKit import NSAppearance
     try:
@@ -115,6 +117,11 @@ LOG_FILE       = Path.home() / ".claude_widget_debug.log"
 LOCK_FILE      = Path(tempfile.gettempdir()) / "claude_widget.lock"
 PLIST_LABEL    = "com.claude.limits.widget"
 PLIST_PATH     = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
+
+# ── Update constants ──────────────────────────────────────────────────────────
+RAW_BASE              = "https://raw.githubusercontent.com/DimaNeskorodiev/claude-limits/main"
+VERSION_URL           = f"{RAW_BASE}/version.txt"
+UPDATE_CHECK_INTERVAL = 86_400   # 24 h in seconds
 REFRESH_SEC    = 60
 POPUP_W        = 280
 POPUP_H        = 230
@@ -272,6 +279,29 @@ def _toggle_autostart() -> bool:
         subprocess.run(["launchctl", "load", str(PLIST_PATH)],
                        capture_output=True)
         return True
+
+
+# ── Update helpers ────────────────────────────────────────────────────────────
+
+def _fetch_latest_version() -> str:
+    """Fetch the latest version string from GitHub. Returns '' on any failure."""
+    try:
+        req = urllib.request.Request(VERSION_URL,
+                                     headers={"User-Agent": "claude-limits-widget"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return resp.read().decode().strip()
+    except Exception:
+        return ""
+
+
+def _version_is_newer(remote: str, local: str) -> bool:
+    """Return True if remote is strictly newer than local (semantic versioning)."""
+    try:
+        def to_tuple(v: str):
+            return tuple(int(x) for x in v.lstrip("v").split("."))
+        return to_tuple(remote) > to_tuple(local)
+    except Exception:
+        return False
 
 
 # ── Single-instance lock ──────────────────────────────────────────────────────
@@ -1237,7 +1267,7 @@ class SetupWindowController(NSObject):
         # ── Footer (y = 0 … H-404) ────────────────────────────────────────
         # Launch at Login checkbox (top of footer, below divider)
         autostart_chk = NSButton.alloc().initWithFrame_(
-            NSMakeRect(PAD, 46, 200, 18)
+            NSMakeRect(PAD, 46, 190, 18)
         )
         autostart_chk.setButtonType_(_CHECKBOX_TYPE)
         autostart_chk.setTitle_("Launch at Login")
@@ -1247,6 +1277,17 @@ class SetupWindowController(NSObject):
         autostart_chk.setAction_("onToggleAutostart:")
         c.addSubview_(autostart_chk)
         self._autostart_chk = autostart_chk
+
+        # [Check for Updates] button — right side of same footer row
+        self._upd_btn = NSButton.alloc().initWithFrame_(
+            NSMakeRect(W - PAD - 150, 43, 150, 22)
+        )
+        self._upd_btn.setTitle_("Check for Updates")
+        self._upd_btn.setBezelStyle_(NSBezelStyleRounded)
+        self._upd_btn.setFont_(NSFont.systemFontOfSize_(11.0))
+        self._upd_btn.setTarget_(self)
+        self._upd_btn.setAction_("onCheckForUpdates:")
+        c.addSubview_(self._upd_btn)
 
         # [Open claude.ai] link button
         link_btn = NSButton.alloc().initWithFrame_(NSMakeRect(PAD, 14, 150, 26))
@@ -1327,6 +1368,14 @@ class SetupWindowController(NSObject):
         new_state = _toggle_autostart()
         # Keep checkbox in sync (toggle_autostart returns the new enabled state)
         self._autostart_chk.setState_(1 if new_state else 0)
+
+    def onCheckForUpdates_(self, sender):
+        """Delegate to AppDelegate.checkForUpdates_ via the shared app delegate."""
+        delegate = NSApplication.sharedApplication().delegate()
+        if delegate:
+            self._upd_btn.setEnabled_(False)
+            self._upd_btn.setTitle_("Checking…")
+            delegate.checkForUpdates_(sender)
 
     def onConnect_(self, sender):
         raw = str(self._tv.string()).strip()
@@ -1444,6 +1493,9 @@ class AppDelegate(NSObject):
         else:
             self.performSelector_withObject_afterDelay_("showSetup:", None, 0.15)
 
+        # Schedule once-a-day update check (5 s after launch to keep startup fast)
+        self.performSelector_withObject_afterDelay_("checkForUpdatesIfDue:", None, 5.0)
+
     def handleClick_(self, sender):
         """Dispatch left-click → popover, right-click → context menu."""
         event = NSApplication.sharedApplication().currentEvent()
@@ -1467,6 +1519,16 @@ class AppDelegate(NSObject):
         """Build and display the right-click context menu."""
         menu = NSMenu.alloc().init()
         menu.setAutoenablesItems_(False)
+
+        # ── Check for Updates… ─────────────────────────────────────────────
+        upd_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Check for Updates…", "checkForUpdates:", ""
+        )
+        upd_item.setTarget_(self)
+        upd_item.setEnabled_(True)
+        menu.addItem_(upd_item)
+
+        menu.addItem_(NSMenuItem.separatorItem())
 
         # ── Launch at Login (checkmark reflects current state) ─────────────
         autostart_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
@@ -1496,6 +1558,141 @@ class AppDelegate(NSObject):
 
     def quitApp_(self, sender):
         NSApplication.sharedApplication().terminate_(sender)
+
+    # ── Update system ─────────────────────────────────────────────────────
+
+    def checkForUpdatesIfDue_(self, _):
+        """Called ~5 s after launch: run a silent background check if ≥24 h since last."""
+        last = self._cfg.get("last_update_check", "")
+        should_check = True
+        if last:
+            try:
+                elapsed = (datetime.now() - datetime.fromisoformat(last)).total_seconds()
+                should_check = elapsed >= UPDATE_CHECK_INTERVAL
+            except Exception:
+                pass
+        if should_check:
+            threading.Thread(
+                target=self._update_check_worker, kwargs={"manual": False},
+                daemon=True
+            ).start()
+
+    def checkForUpdates_(self, sender):
+        """Manual check — called from context menu or Settings button."""
+        threading.Thread(
+            target=self._update_check_worker, kwargs={"manual": True},
+            daemon=True
+        ).start()
+
+    @objc.python_method
+    def _update_check_worker(self, manual: bool = False):
+        """Background: fetch latest version then post result to the main thread."""
+        latest = _fetch_latest_version()
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "handleUpdateCheckResult:", {"latest": latest, "manual": manual}, False
+        )
+
+    def handleUpdateCheckResult_(self, result):
+        """Main thread: process the version check result."""
+        latest = result.get("latest", "")
+        manual = result.get("manual", False)
+
+        # Persist check timestamp so auto-check doesn't repeat within 24 h
+        self._cfg["last_update_check"] = datetime.now().isoformat()
+        self._save_cfg()
+
+        # Re-enable the Settings "Check for Updates" button if it was used
+        try:
+            swc = SetupWindowController._instance
+            if swc:
+                swc._upd_btn.setEnabled_(True)
+                swc._upd_btn.setTitle_("Check for Updates")
+        except Exception:
+            pass
+
+        if latest and _version_is_newer(latest, APP_VERSION):
+            self._show_update_prompt(latest)
+        elif manual:
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("You're up to date!")
+            alert.setInformativeText_(
+                f"Claude Limits Widget v{APP_VERSION} is the latest version."
+            )
+            alert.addButtonWithTitle_("OK")
+            alert.runModal()
+
+    @objc.python_method
+    def _show_update_prompt(self, latest_version: str):
+        """Show an NSAlert asking the user whether to install the new version."""
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_(f"Update Available — v{latest_version}")
+        alert.setInformativeText_(
+            f"A new version of Claude Limits Widget is available.\n\n"
+            f"Installed:  v{APP_VERSION}\n"
+            f"Available:  v{latest_version}\n\n"
+            "Update now? The app will restart automatically."
+        )
+        alert.addButtonWithTitle_("Update Now")
+        alert.addButtonWithTitle_("Later")
+        response = alert.runModal()
+        if response == 1000:   # NSAlertFirstButtonReturn
+            threading.Thread(
+                target=self._perform_update, args=(latest_version,),
+                daemon=True
+            ).start()
+
+    @objc.python_method
+    def _perform_update(self, latest_version: str):
+        """Background: download new files then trigger restart on main thread."""
+        try:
+            install_dir = str(Path(__file__).parent)
+            files = ["widget.py", "requirements.txt", "uninstall.sh", "launch.sh"]
+            for fname in files:
+                subprocess.run(
+                    ["curl", "-fsSL", f"{RAW_BASE}/{fname}",
+                     "-o", os.path.join(install_dir, fname)],
+                    check=True, capture_output=True
+                )
+            # Refresh dependencies in case requirements changed
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-r",
+                 os.path.join(install_dir, "requirements.txt"),
+                 "--quiet", "--upgrade"],
+                capture_output=True
+            )
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "restartAfterUpdate:", latest_version, False
+            )
+        except Exception as exc:
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "handleUpdateError:", str(exc), False
+            )
+
+    def restartAfterUpdate_(self, version):
+        """Main thread: release the instance lock, launch the new version, quit."""
+        global _lock_fh
+        if _lock_fh:
+            try:
+                fcntl.flock(_lock_fh, fcntl.LOCK_UN)
+                _lock_fh.close()
+                _lock_fh = None
+            except Exception:
+                pass
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve())])
+        NSApplication.sharedApplication().terminate_(None)
+
+    def handleUpdateError_(self, error_msg):
+        """Main thread: show error alert if the download failed."""
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("Update Failed")
+        alert.setInformativeText_(
+            f"Could not download the update:\n{error_msg}\n\n"
+            "Please try again later or update manually:\n"
+            "curl -fsSL https://raw.githubusercontent.com/DimaNeskorodiev/"
+            "claude-limits/main/install.sh | bash"
+        )
+        alert.addButtonWithTitle_("OK")
+        alert.runModal()
 
     def showSetup_(self, _):
         _open_setup(
