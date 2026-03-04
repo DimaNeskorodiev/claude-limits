@@ -6,6 +6,7 @@ Click the status bar icon to open the Liquid Glass usage panel.
 """
 
 import os
+import subprocess
 import tempfile
 import threading
 import json
@@ -46,6 +47,7 @@ try:
         NSTextAlignmentLeft, NSTextAlignmentRight, NSTextAlignmentCenter,
         NSBezelStyleRounded,
         NSImageView, NSPasteboard,
+        NSMenu, NSMenuItem,
     )
     from AppKit import NSAppearance
     try:
@@ -91,9 +93,26 @@ try:
 except (ImportError, AttributeError):
     _POPOVER_MAT = 6   # NSVisualEffectMaterialPopover raw value
 
+# Mouse event masks for sendActionOn_ (left + right click on status bar button)
+try:
+    from AppKit import NSEventMaskLeftMouseDown, NSEventMaskRightMouseDown
+    _CLICK_MASK = int(NSEventMaskLeftMouseDown) | int(NSEventMaskRightMouseDown)
+except (ImportError, AttributeError):
+    _CLICK_MASK = 2 | 8   # NSEventMaskLeftMouseDown=2, NSEventMaskRightMouseDown=8
+
+_RIGHT_MOUSE_DOWN = 3   # NSEventTypeRightMouseDown (stable integer value)
+
+# NSButtonTypeSwitch = checkbox style
+try:
+    from AppKit import NSButtonTypeSwitch as _CHECKBOX_TYPE
+except (ImportError, AttributeError):
+    _CHECKBOX_TYPE = 3
+
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE    = Path.home() / ".claude_widget_config.json"
 LOG_FILE       = Path.home() / ".claude_widget_debug.log"
+PLIST_LABEL    = "com.claude.limits.widget"
+PLIST_PATH     = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
 REFRESH_SEC    = 60
 POPUP_W        = 280
 POPUP_H        = 230
@@ -174,6 +193,67 @@ def _mask_session_key(raw: str) -> str:
     if len(raw) <= 16:
         return raw[:4] + "…"
     return raw[:8] + "…" + raw[-4:]
+
+
+# ── Launch-at-login helpers (LaunchAgent plist) ───────────────────────────────
+
+def _autostart_enabled() -> bool:
+    """Return True if the LaunchAgent plist is installed."""
+    return PLIST_PATH.exists()
+
+
+def _write_plist_file() -> None:
+    """Write (or overwrite) the LaunchAgent plist with the current Python & widget path."""
+    python_exe  = sys.executable
+    widget_path = str(Path(__file__).resolve())
+    log_dir     = Path.home() / "Library" / "Logs" / "ClaudeLimits"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PLIST_PATH.write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{PLIST_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{python_exe}</string>
+    <string>{widget_path}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>{log_dir}/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>{log_dir}/stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
+''')
+
+
+def _toggle_autostart() -> bool:
+    """Toggle LaunchAgent on/off.  Returns the *new* enabled state (True = enabled)."""
+    if _autostart_enabled():
+        subprocess.run(["launchctl", "unload", str(PLIST_PATH)],
+                       capture_output=True)
+        try:
+            PLIST_PATH.unlink()
+        except Exception:
+            pass
+        return False
+    else:
+        _write_plist_file()
+        subprocess.run(["launchctl", "load", str(PLIST_PATH)],
+                       capture_output=True)
+        return True
 
 
 # ── Debug log ─────────────────────────────────────────────────────────────────
@@ -1092,6 +1172,19 @@ class SetupWindowController(NSObject):
         c.addSubview_(_make_divider(NSMakeRect(0, H - 404, W, 1)))
 
         # ── Footer (y = 0 … H-404) ────────────────────────────────────────
+        # Launch at Login checkbox (top of footer, below divider)
+        autostart_chk = NSButton.alloc().initWithFrame_(
+            NSMakeRect(PAD, 46, 200, 18)
+        )
+        autostart_chk.setButtonType_(_CHECKBOX_TYPE)
+        autostart_chk.setTitle_("Launch at Login")
+        autostart_chk.setFont_(NSFont.systemFontOfSize_(12.0))
+        autostart_chk.setState_(1 if _autostart_enabled() else 0)
+        autostart_chk.setTarget_(self)
+        autostart_chk.setAction_("onToggleAutostart:")
+        c.addSubview_(autostart_chk)
+        self._autostart_chk = autostart_chk
+
         # [Open claude.ai] link button
         link_btn = NSButton.alloc().initWithFrame_(NSMakeRect(PAD, 14, 150, 26))
         link_btn.setTitle_("Open claude.ai ↗")
@@ -1159,6 +1252,12 @@ class SetupWindowController(NSObject):
                 NSWorkspace.sharedWorkspace().openURL_(url)
         except Exception:
             pass
+
+    def onToggleAutostart_(self, sender):
+        """Called when the Launch at Login checkbox is clicked in Settings."""
+        new_state = _toggle_autostart()
+        # Keep checkbox in sync (toggle_autostart returns the new enabled state)
+        self._autostart_chk.setState_(1 if new_state else 0)
 
     def onConnect_(self, sender):
         raw = str(self._tv.string()).strip()
@@ -1249,7 +1348,9 @@ class AppDelegate(NSObject):
         btn = self._item.button()
         btn.setImage_(_make_status_icon(0.0))
         btn.setTarget_(self)
-        btn.setAction_("togglePopover:")
+        btn.setAction_("handleClick:")
+        # Fire action on both left-click and right-click
+        btn.sendActionOn_(_CLICK_MASK)
 
         # Popover + view controller
         self._vc = UsageViewController.alloc().init()
@@ -1265,6 +1366,14 @@ class AppDelegate(NSObject):
         else:
             self.performSelector_withObject_afterDelay_("showSetup:", None, 0.15)
 
+    def handleClick_(self, sender):
+        """Dispatch left-click → popover, right-click → context menu."""
+        event = NSApplication.sharedApplication().currentEvent()
+        if event is not None and int(event.type()) == _RIGHT_MOUSE_DOWN:
+            self._showContextMenu()
+        else:
+            self.togglePopover_(sender)
+
     def togglePopover_(self, sender):
         if self._popover.isShown():
             self._popover.performClose_(sender)
@@ -1274,6 +1383,41 @@ class AppDelegate(NSObject):
                 btn.bounds(), btn,
                 3   # NSRectEdgeMaxY — opens below the menu bar
             )
+
+    @objc.python_method
+    def _showContextMenu(self):
+        """Build and display the right-click context menu."""
+        menu = NSMenu.alloc().init()
+        menu.setAutoenablesItems_(False)
+
+        # ── Launch at Login (checkmark reflects current state) ─────────────
+        autostart_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Launch at Login", "toggleAutostart:", ""
+        )
+        autostart_item.setTarget_(self)
+        autostart_item.setState_(1 if _autostart_enabled() else 0)
+        autostart_item.setEnabled_(True)
+        menu.addItem_(autostart_item)
+
+        menu.addItem_(NSMenuItem.separatorItem())
+
+        # ── Quit ────────────────────────────────────────────────────────────
+        quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Quit", "quitApp:", ""
+        )
+        quit_item.setTarget_(self)
+        quit_item.setEnabled_(True)
+        menu.addItem_(quit_item)
+
+        # popUpStatusItemMenu_ positions the menu correctly under the icon
+        self._item.popUpStatusItemMenu_(menu)
+
+    def toggleAutostart_(self, sender):
+        """Toggle LaunchAgent on/off (called from both context menu and Settings)."""
+        _toggle_autostart()
+
+    def quitApp_(self, sender):
+        NSApplication.sharedApplication().terminate_(sender)
 
     def showSetup_(self, _):
         _open_setup(
