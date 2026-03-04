@@ -188,10 +188,26 @@ def _lerp_color(t: float, c0: tuple, c1: tuple) -> tuple:
 
 
 def _mask_session_key(raw: str) -> str:
-    """Return first 8 chars + '…' + last 4 chars of a session cookie string."""
+    """
+    Return a masked display string for the stored cookie value.
+    Extracts and masks the session key *value* when given a full cookie string,
+    so the user sees e.g. 'sk-ant-si…3f8a' rather than the whole cookie header.
+    """
     raw = (raw or "").strip()
     if not raw:
         return "—"
+    # Try to pull just the session key value out of a full cookie string
+    cookies = parse_cookie_string(raw)
+    for key in ("sessionKey", "__Secure-next-auth.session-token",
+                "next-auth.session-token", "CF_Authorization"):
+        if key in cookies:
+            val = cookies[key]
+            if not val:
+                continue
+            if len(val) <= 16:
+                return val[:4] + "…"
+            return val[:8] + "…" + val[-4:]
+    # Bare value (or unrecognised cookie string) — mask the raw input directly
     if len(raw) <= 16:
         return raw[:4] + "…"
     return raw[:8] + "…" + raw[-4:]
@@ -321,21 +337,39 @@ def parse_cookie_string(raw: str) -> dict:
     return out
 
 
-def cookie_string_looks_valid(raw: str) -> tuple:
-    """Return (ok, error_message)."""
-    if not raw or not raw.strip():
-        return False, "Please paste your Cookie header value."
+_SESSION_COOKIE_NAMES = (
+    "sessionKey",
+    "__Secure-next-auth.session-token",
+    "next-auth.session-token",
+    "CF_Authorization",
+)
+
+
+def normalize_session_input(raw: str) -> str:
+    """
+    Accept either:
+      • a full Cookie header string  →  'sessionKey=sk-ant-…; other=value; …'
+      • a bare session-key value     →  'sk-ant-sid01-…'
+    Always returns a cookie string in 'name=value' form that ClaudeAPI can consume.
+    If the input parses to a dict containing a recognised session cookie name it is
+    used as-is; otherwise the whole value is wrapped as 'sessionKey=<value>'.
+    """
+    raw = raw.strip()
     cookies = parse_cookie_string(raw)
-    if not cookies:
-        return False, "Could not parse any cookies from that string."
-    has_session = any(
-        k in cookies
-        for k in ("sessionKey", "__Secure-next-auth.session-token",
-                  "next-auth.session-token", "CF_Authorization")
-    )
-    if not has_session:
-        return False, ("No recognised session cookie found.\n"
-                       "Make sure you copied the full Cookie header.")
+    if any(k in cookies for k in _SESSION_COOKIE_NAMES):
+        return raw          # already a valid full cookie string
+    # Bare value — wrap it so ClaudeAPI can set it as the sessionKey cookie
+    return f"sessionKey={raw}"
+
+
+def cookie_string_looks_valid(raw: str) -> tuple:
+    """
+    Return (ok, error_message).
+    Accepts a full Cookie header string OR a bare session-key value.
+    Deep validation is done by the live API call; here we only reject empty input.
+    """
+    if not raw or not raw.strip():
+        return False, "Please paste your session key or full Cookie header."
     return True, ""
 
 
@@ -1144,9 +1178,10 @@ class SetupWindowController(NSObject):
         ))
 
         instr_text = (
-            "1. Open claude.ai in Chrome  →  F12  →  Network tab  →  reload the page\n"
-            "2. Click any claude.ai request  →  Request Headers  →  find 'Cookie:'\n"
-            "3. Right-click the value  →  Copy  →  paste below, then click Connect"
+            "Paste your sessionKey value or the full Cookie header below.\n\n"
+            "To find it: open claude.ai → DevTools (F12) → Application → Cookies\n"
+            "→ copy the value of 'sessionKey'  (or copy the full Cookie header\n"
+            "from any Network request to claude.ai)"
         )
         c.addSubview_(_make_label(
             instr_text,
@@ -1306,10 +1341,13 @@ class SetupWindowController(NSObject):
             self._connect_status_lbl.setStringValue_(err)
             self._connect_status_lbl.setTextColor_(_nscolor(_CLR_ERR))
             return
+        # Normalise: wrap bare session-key values as 'sessionKey=<value>'
+        # so ClaudeAPI always receives a proper cookie string.
+        normalized = normalize_session_input(raw)
         self._connect_btn.setEnabled_(False)
         self._connect_status_lbl.setStringValue_("Validating…")
         self._connect_status_lbl.setTextColor_(NSColor.secondaryLabelColor())
-        threading.Thread(target=self._validate_worker, args=(raw,), daemon=True).start()
+        threading.Thread(target=self._validate_worker, args=(normalized,), daemon=True).start()
 
     @objc.python_method
     def _validate_worker(self, raw):
