@@ -128,7 +128,7 @@ POPUP_H        = 230
 SETUP_W        = 500
 SETUP_H        = 480
 BASE_URL       = "https://claude.ai"
-APP_VERSION    = "1.0.14"
+APP_VERSION    = "1.0.15"
 
 # ── Icon colour endpoints (SRGB 0-1) ─────────────────────────────────────────
 # Base colour is resolved at draw time from NSColor.labelColor() so it always
