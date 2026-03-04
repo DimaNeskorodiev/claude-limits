@@ -25,7 +25,7 @@ error()   { echo -e "${RED}✗${RESET} $*" >&2; }
 header()  { echo -e "\n${BOLD}$*${RESET}"; }
 
 # ── Config ────────────────────────────────────────────────────────────────────
-REPO_URL="https://github.com/DimaNeskorodiev/claude-limits.git"
+RAW_BASE="https://raw.githubusercontent.com/DimaNeskorodiev/claude-limits/main"
 INSTALL_DIR="$HOME/Library/Application Support/ClaudeLimits"
 PLIST_LABEL="com.claude.limits.widget"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
@@ -83,30 +83,31 @@ header "Installing app files…"
 
 mkdir -p "$INSTALL_DIR"
 
-# If running from a local clone, copy files in-place; otherwise git clone.
+# Files to fetch from GitHub (curl is built into every macOS — no git needed)
+FILES=(widget.py requirements.txt uninstall.sh launch.sh)
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
+
 if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/widget.py" && "$SCRIPT_DIR" != "$INSTALL_DIR" ]]; then
+    # Running from a local checkout — copy files directly
     info "Copying files from local source: $SCRIPT_DIR"
-    cp "$SCRIPT_DIR/widget.py"        "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/install.sh"       "$INSTALL_DIR/"
-    cp "$SCRIPT_DIR/uninstall.sh"     "$INSTALL_DIR/" 2>/dev/null || true
-elif [[ -f "$INSTALL_DIR/widget.py" ]]; then
-    # Already installed — pull latest
-    info "Updating existing installation…"
-    if command -v git &>/dev/null && [[ -d "$INSTALL_DIR/.git" ]]; then
-        git -C "$INSTALL_DIR" pull --ff-only
-    else
-        warn "Cannot auto-update without git. Re-run the curl installer to update."
-    fi
+    for f in "${FILES[@]}"; do
+        [[ -f "$SCRIPT_DIR/$f" ]] && cp "$SCRIPT_DIR/$f" "$INSTALL_DIR/"
+    done
+    cp "$SCRIPT_DIR/install.sh" "$INSTALL_DIR/"
 else
-    # Fresh install from GitHub
-    info "Cloning from GitHub…"
-    if ! command -v git &>/dev/null; then
-        error "git not found. Install Xcode Command Line Tools: xcode-select --install"
-        exit 1
+    # Fresh install or update — download each file via curl (no git required)
+    if [[ -f "$INSTALL_DIR/widget.py" ]]; then
+        info "Updating to latest version…"
+    else
+        info "Downloading app files from GitHub…"
     fi
-    git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+    for f in "${FILES[@]}"; do
+        curl -fsSL "$RAW_BASE/$f" -o "$INSTALL_DIR/$f"
+    done
+    # Always refresh the installer itself too
+    curl -fsSL "$RAW_BASE/install.sh" -o "$INSTALL_DIR/install.sh"
+    chmod +x "$INSTALL_DIR/install.sh" "$INSTALL_DIR/uninstall.sh" "$INSTALL_DIR/launch.sh"
 fi
 success "App files ready in: $INSTALL_DIR"
 
