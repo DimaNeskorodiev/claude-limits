@@ -48,12 +48,34 @@ fi
 success "macOS detected: $(sw_vers -productVersion)"
 
 # ── 2. Python 3 check ────────────────────────────────────────────────────────
+# IMPORTANT: /usr/bin/python3 on macOS is a stub — calling it without a real
+# Python installed triggers the "No developer tools were found" Xcode dialog.
+# We deliberately skip that stub and only use real Python installations.
 PYTHON=""
-for candidate in python3 python3.13 python3.12 python3.11 python3.10 python3.9; do
-    if command -v "$candidate" &>/dev/null; then
-        ver=$("$candidate" -c "import sys; print(sys.version_info.minor)")
+
+# Ordered list of real Python paths (Homebrew M1, Homebrew Intel, python.org,
+# pyenv, version-specific binaries). /usr/bin/python3 is intentionally absent.
+CANDIDATES=(
+    /opt/homebrew/bin/python3
+    /opt/homebrew/bin/python3.13
+    /opt/homebrew/bin/python3.12
+    /opt/homebrew/bin/python3.11
+    /opt/homebrew/bin/python3.10
+    /opt/homebrew/bin/python3.9
+    /usr/local/bin/python3
+    /usr/local/bin/python3.13
+    /usr/local/bin/python3.12
+    /usr/local/bin/python3.11
+    /usr/local/bin/python3.10
+    /usr/local/bin/python3.9
+    "$HOME/.pyenv/shims/python3"
+)
+
+for candidate in "${CANDIDATES[@]}"; do
+    if [[ -x "$candidate" ]]; then
+        ver=$("$candidate" -c "import sys; print(sys.version_info.minor)" 2>/dev/null) || continue
         if [[ "$ver" -ge "$MIN_PYTHON_MINOR" ]]; then
-            PYTHON="$(command -v "$candidate")"
+            PYTHON="$candidate"
             break
         fi
     fi
@@ -62,10 +84,18 @@ done
 if [[ -z "$PYTHON" ]]; then
     error "Python 3.${MIN_PYTHON_MINOR}+ not found."
     echo ""
-    echo "  Install it via Homebrew:"
-    echo "    brew install python"
+    echo "  ⚠️  Do NOT use the macOS built-in python3 — it requires Xcode."
     echo ""
-    echo "  Or download from: https://www.python.org/downloads/"
+    echo "  Install a real Python (no Xcode needed) via one of:"
+    echo ""
+    echo "    Option 1 — python.org installer (recommended, easiest):"
+    echo "      https://www.python.org/downloads/"
+    echo ""
+    echo "    Option 2 — Homebrew:"
+    echo "      /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+    echo "      brew install python"
+    echo ""
+    echo "  After installing Python, re-run this installer."
     exit 1
 fi
 success "Python found: $PYTHON ($($PYTHON --version))"

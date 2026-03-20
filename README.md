@@ -23,14 +23,16 @@
 | Requirement | Details |
 |---|---|
 | **macOS** | 12 Monterey or later |
-| **Python** | 3.9 or later (pre-installed on most Macs) |
+| **Python** | 3.9 or later — from [python.org](https://www.python.org/downloads/) or Homebrew |
 | **Claude account** | Free, Pro, Team, or Enterprise (all have 5-hour session limits) |
 
-**Don't have Python?**
-```bash
-brew install python
-```
-Or download from [python.org](https://www.python.org/downloads/)
+> **No Xcode or developer tools required.**
+> macOS ships a `python3` stub at `/usr/bin/python3` that triggers an Xcode install prompt — the installer automatically skips it and only uses real Python installations.
+
+**Don't have Python? Install without Xcode:**
+
+- **Option 1 (easiest)** — download the installer from [python.org/downloads](https://www.python.org/downloads/) and run it. Done.
+- **Option 2 (Homebrew)** — if you have Homebrew: `brew install python`
 
 ---
 
@@ -49,6 +51,12 @@ The installer will:
 4. Register a login item so the widget starts automatically
 5. Launch the widget immediately
 
+**If the widget isn't running** (e.g. after a reboot before first login), start it manually:
+
+```bash
+python3 ~/Library/Application\ Support/ClaudeLimits/widget.py &
+```
+
 ---
 
 ## First-time setup
@@ -62,14 +70,14 @@ The installer will:
 
 ### Getting your session cookie
 
-The widget needs your Claude session key to check your usage. Here's how to find it:
+The widget reads your Claude usage via your browser session. No Xcode or developer tools required — just your browser's built-in inspector:
 
-1. Open [claude.ai](https://claude.ai) in your web browser
-2. Open **Developer Tools** (press `Cmd+Option+I` on Mac)
-3. Go to the **Application** tab → **Cookies** section (left sidebar)
-4. Click on `https://claude.ai` in the domain list
-5. Find the cookie named **`sessionKey`** (or **`next-auth.session-token`**)
-6. Copy its **Value** (the long string)
+1. Open [claude.ai](https://claude.ai) in **Chrome** or **Safari** (must be logged in)
+2. Press **`Cmd + Option + I`** to open the browser inspector
+3. Click the **Application** tab at the top of the inspector panel
+4. In the left sidebar, expand **Cookies** → click `https://claude.ai`
+5. Find the cookie named **`sessionKey`**
+6. Click on it, then copy the full **Value** (a long string starting with `sk-ant-…`)
 7. Paste it into the widget's Settings panel and click **Connect**
 
 **Privacy note:**
@@ -151,7 +159,10 @@ It optionally removes your saved session config.
 
 ### Widget doesn't appear in menu bar
 - Make sure you're on macOS 12+
-- Try running manually: `python3 ~/Library/Application\ Support/ClaudeLimits/widget.py`
+- Start it manually (no Xcode or extra tools needed — just Python):
+  ```bash
+  python3 ~/Library/Application\ Support/ClaudeLimits/widget.py &
+  ```
 - Check logs: `~/Library/Logs/ClaudeLimits/stderr.log`
 
 ### Shows "—%" or no data
