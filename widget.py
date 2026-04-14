@@ -478,18 +478,30 @@ class ClaudeAPI:
             return False, msg[:120]
 
     # ── Account / org ID ───────────────────────────────────────────────────
-    def get_account(self) -> dict:
+    def get_account(self) -> tuple:
+        """
+        Returns (account_dict, auth_ok).
+        auth_ok is False when the cookie is expired/invalid (bootstrap returned
+        account: null), True when a real account object was received, and None
+        when the request itself failed (network error).
+        """
         try:
             r = self.s.get(BASE_URL + "/api/bootstrap", timeout=10)
             log(f"bootstrap -> {r.status_code}")
+            if r.status_code in (401, 403):
+                log("  bootstrap: auth rejected")
+                return {}, False
             ct = r.headers.get("content-type", "")
             if r.ok and "json" in ct:
                 data    = r.json()
-                account = data.get("account") or {}
-                return account
+                account = data.get("account")
+                if account is None:
+                    log("  bootstrap: account is null (session expired)")
+                    return {}, False
+                return dict(account) or {}, True
         except Exception as e:
             log(f"  bootstrap error: {e}")
-        return {}
+        return {}, None   # None = network/unknown error
 
     def _org_id(self, account: dict):
         paths = [
@@ -1816,7 +1828,16 @@ class AppDelegate(NSObject):
             if not self._org_id:
                 with self._org_id_lock:
                     if not self._org_id:
-                        account      = self._api.get_account()
+                        account, auth_ok = self._api.get_account()
+                        if auth_ok is False:
+                            # Cookie expired or rejected — surface immediately; no
+                            # point probing limits endpoints that will all 404.
+                            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                                "consumeError:",
+                                "Session expired — open Settings and paste a fresh cookie.",
+                                False,
+                            )
+                            return
                         self._org_id = self._api._org_id(account)
                         log(f"org_id resolved: {bool(self._org_id)}")
 
@@ -1825,7 +1846,9 @@ class AppDelegate(NSObject):
             if data is None:
                 # B-1: pass error string via withObject: — no shared instance var
                 self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                    "consumeError:", "No limits endpoint found.", False
+                    "consumeError:",
+                    "Session expired — open Settings and paste a fresh cookie.",
+                    False,
                 )
             else:
                 parsed = ClaudeAPI.parse(data)
