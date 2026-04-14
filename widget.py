@@ -128,7 +128,7 @@ POPUP_H        = 230
 SETUP_W        = 500
 SETUP_H        = 480
 BASE_URL       = "https://claude.ai"
-APP_VERSION    = "1.0.19"
+APP_VERSION    = "1.0.22"
 
 # Icon drawing uses NSImage template mode — no colour constants needed.
 # Template images are drawn in black/alpha; macOS composites them in the
@@ -1653,7 +1653,7 @@ class AppDelegate(NSObject):
             )
 
     def restartAfterUpdate_(self, version):
-        """Main thread: release the instance lock, launch the new version, quit."""
+        """Main thread: release the instance lock, restart via launchd, quit."""
         global _lock_fh
         if _lock_fh:
             try:
@@ -1662,7 +1662,25 @@ class AppDelegate(NSObject):
                 _lock_fh = None
             except Exception:
                 pass
-        subprocess.Popen([sys.executable, str(Path(__file__).resolve())])
+
+        # Preferred: let launchd restart the agent cleanly.
+        # kickstart -k kills the current instance (us) and spawns a fresh one
+        # under launchd's supervision — no Cocoa fork-safety issues.
+        label = "com.claude.limits.widget"
+        try:
+            subprocess.Popen(
+                ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
+                close_fds=True, start_new_session=True,
+            )
+        except Exception:
+            # Fallback for manual / non-launchd launches: start a new process
+            # directly.  start_new_session detaches it from our process group so
+            # it survives after we exit.
+            subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve())],
+                close_fds=True, start_new_session=True,
+            )
+
         NSApplication.sharedApplication().terminate_(None)
 
     def handleUpdateError_(self, error_msg):
