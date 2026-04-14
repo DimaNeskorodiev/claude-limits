@@ -503,37 +503,58 @@ class ClaudeAPI:
             log(f"  bootstrap error: {e}")
         return {}, None   # None = network/unknown error
 
+    def _all_org_ids(self, account: dict) -> list:
+        """
+        Return every org UUID present in the bootstrap account blob, preserving
+        insertion order.  Bootstrap can list several orgs (personal + team +
+        enterprise) and the one with usage data may not be first.
+        """
+        seen = {}   # use dict to deduplicate while preserving order
+        def _add(val):
+            if val:
+                seen[str(val)] = True
+
+        for m in account.get("memberships") or []:
+            org = m.get("organization") or {}
+            _add(org.get("uuid") or org.get("id"))
+
+        for org in account.get("organizations") or []:
+            _add(org.get("uuid") or org.get("id"))
+
+        org = account.get("organization") or {}
+        _add(org.get("uuid") or org.get("id"))
+
+        _add(account.get("uuid") or account.get("id"))
+
+        ids = list(seen.keys())
+        log(f"  all_org_ids: {ids}")
+        return ids
+
+    # kept for compatibility — returns first org only
     def _org_id(self, account: dict):
-        paths = [
-            ("memberships", 0, "organization", "uuid"),
-            ("memberships", 0, "organization", "id"),
-            ("organizations", 0, "uuid"),
-            ("organizations", 0, "id"),
-            ("organization", "uuid"),
-            ("organization", "id"),
-            ("uuid",),
-            ("id",),
-        ]
-        for path in paths:
-            node = account
-            try:
-                for key in path:
-                    node = node[key]
-                if node:
-                    return str(node)
-            except (KeyError, IndexError, TypeError):
-                continue
-        return None
+        ids = self._all_org_ids(account)
+        return ids[0] if ids else None
 
     # ── Limits ─────────────────────────────────────────────────────────────
-    def get_limits(self, org_id=None) -> tuple:
+    def get_limits(self, org_ids=None) -> tuple:
+        """
+        org_ids: list of org UUIDs to probe (tries each in order until one
+        returns usable data).  Also accepts a single string for back-compat.
+        """
+        if isinstance(org_ids, str):
+            org_ids = [org_ids] if org_ids else []
+        org_ids = org_ids or []
+
+        # Build candidate list: org-specific endpoints for every known org,
+        # then generic fallbacks.  A 403 on one org just means that org doesn't
+        # expose usage — try the next one before giving up.
         candidates = []
-        if org_id:
+        for oid in org_ids:
             candidates += [
-                f"/api/organizations/{org_id}/usage",
-                f"/api/organizations/{org_id}/limits",
-                f"/api/organizations/{org_id}/rate_limits",
-                f"/api/organizations/{org_id}/billing_usage",
+                f"/api/organizations/{oid}/usage",
+                f"/api/organizations/{oid}/limits",
+                f"/api/organizations/{oid}/rate_limits",
+                f"/api/organizations/{oid}/billing_usage",
             ]
         candidates += [
             "/api/usage", "/api/limits", "/api/rate_limits",
@@ -1411,12 +1432,12 @@ class AppDelegate(NSObject):
         # State
         self._cfg              = self._load_cfg()
         self._api              = None
-        self._org_id           = None
+        self._org_ids          = None          # list of all org UUIDs from bootstrap
         self._auth_bad         = False
         self._timer            = None
         self._last_session_pct = 0.0           # for icon redraw on theme change
         self._worker_lock      = threading.Lock()   # B-3: prevent concurrent workers
-        self._org_id_lock      = threading.Lock()   # B-2: protect _org_id check-then-set
+        self._org_id_lock      = threading.Lock()   # B-2: protect _org_ids check-then-set
 
         # Register for system dark/light mode changes (to redraw the icon)
         if NSDistributedNotificationCenter is not None:
@@ -1750,7 +1771,7 @@ class AppDelegate(NSObject):
     @objc.python_method
     def _init_api(self, cookie_str: str):
         self._api    = ClaudeAPI(cookie_str)
-        self._org_id = None
+        self._org_ids = None
 
     @objc.python_method
     def _on_cookie_saved(self, cookie_str: str):
@@ -1776,7 +1797,7 @@ class AppDelegate(NSObject):
         except Exception:
             pass
         self._api              = None
-        self._org_id           = None
+        self._org_ids          = None
         self._auth_bad         = False
         self._last_session_pct = 0.0
         if self._timer:
@@ -1824,10 +1845,10 @@ class AppDelegate(NSObject):
             if not self._api:
                 return
             # B-2: double-checked lock prevents concurrent threads from both
-            # calling get_account() when _org_id is None on first run.
-            if not self._org_id:
+            # calling get_account() when _org_ids is None on first run.
+            if self._org_ids is None:
                 with self._org_id_lock:
-                    if not self._org_id:
+                    if self._org_ids is None:
                         account, auth_ok = self._api.get_account()
                         if auth_ok is False:
                             # Cookie expired or rejected — surface immediately; no
@@ -1838,10 +1859,10 @@ class AppDelegate(NSObject):
                                 False,
                             )
                             return
-                        self._org_id = self._api._org_id(account)
-                        log(f"org_id resolved: {bool(self._org_id)}")
+                        self._org_ids = self._api._all_org_ids(account)
+                        log(f"org_ids resolved: {self._org_ids}")
 
-            data, endpoint = self._api.get_limits(self._org_id)
+            data, endpoint = self._api.get_limits(self._org_ids)
 
             if data is None:
                 # B-1: pass error string via withObject: — no shared instance var
