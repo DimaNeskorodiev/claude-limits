@@ -35,7 +35,9 @@ pkill -f "widget.py" 2>/dev/null && echo -e "  ${GREEN}✓${RESET} Process stopp
 
 # Unload and remove LaunchAgent
 if [[ -f "$PLIST_PATH" ]]; then
-    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/${PLIST_LABEL}" 2>/dev/null \
+        || launchctl unload "$PLIST_PATH" 2>/dev/null \
+        || true
     rm -f "$PLIST_PATH"
     echo -e "  ${GREEN}✓${RESET} Auto-start agent removed"
 fi

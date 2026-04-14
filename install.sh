@@ -218,13 +218,17 @@ info  "Open Finder → ~/Applications to add it to your Dock or Launchpad."
 # ── 9. LaunchAgent (auto-start at login) ─────────────────────────────────────
 header "Configuring auto-start at login…"
 
-# Stop any existing instance first
-if launchctl list | grep -q "$PLIST_LABEL" 2>/dev/null; then
-    launchctl unload "$PLIST_PATH" 2>/dev/null || true
-fi
-
 LOG_DIR="$HOME/Library/Logs/ClaudeLimits"
 mkdir -p "$LOG_DIR"
+
+# Kill any stale widget process before touching the agent
+pkill -f "widget.py" 2>/dev/null || true
+sleep 0.5
+
+# Unload old agent — use modern bootout (macOS 13+), fall back to legacy unload
+launchctl bootout "gui/$(id -u)/${PLIST_LABEL}" 2>/dev/null \
+    || launchctl unload "$PLIST_PATH" 2>/dev/null \
+    || true
 
 cat > "$PLIST_PATH" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -240,7 +244,7 @@ cat > "$PLIST_PATH" <<PLIST_EOF
     <string>${INSTALL_DIR}/widget.py</string>
   </array>
   <key>RunAtLoad</key>
-  <false/>
+  <true/>
   <key>KeepAlive</key>
   <false/>
   <key>StandardOutPath</key>
@@ -256,21 +260,24 @@ cat > "$PLIST_PATH" <<PLIST_EOF
 </plist>
 PLIST_EOF
 
-launchctl load "$PLIST_PATH" 2>/dev/null || true
-success "Auto-start agent installed (starts at next login)"
+# Load agent — use modern bootstrap (macOS 13+), fall back to legacy load.
+# RunAtLoad=true means launchd starts the widget immediately AND at every login.
+launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null \
+    || launchctl load "$PLIST_PATH" 2>/dev/null \
+    || true
 
-# ── 10. Launch widget now ─────────────────────────────────────────────────────
+# ── 10. Wait for widget to appear (RunAtLoad handles the actual launch) ────────
 header "Launching widget…"
 
-# Kill any stale instance
-pkill -f "widget.py" 2>/dev/null || true
-sleep 0.5
-
-# Start in background
-"$VENV_PYTHON" "$INSTALL_DIR/widget.py" &>/dev/null &
-sleep 1
-
-success "Widget is running!"
+# Give launchd up to 5 s to start the widget via RunAtLoad
+for i in 1 2 3 4 5; do
+    sleep 1
+    if pgrep -f "widget.py" &>/dev/null; then
+        success "Widget is running!"
+        break
+    fi
+    [[ $i -eq 5 ]] && warn "Widget did not start automatically — try opening it from ~/Applications or running: launchctl start ${PLIST_LABEL}"
+done
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo ""
