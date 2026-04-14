@@ -114,7 +114,7 @@ header "Installing app files…"
 mkdir -p "$INSTALL_DIR"
 
 # Files to fetch from GitHub (curl is built into every macOS — no git needed)
-FILES=(widget.py requirements.txt uninstall.sh launch.sh)
+FILES=(widget.py requirements.txt uninstall.sh launch.sh generate_icon.py)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 
@@ -141,16 +141,81 @@ else
 fi
 success "App files ready in: $INSTALL_DIR"
 
-# ── 5. Install Python dependencies ───────────────────────────────────────────
+# ── 5. Create virtualenv + install Python dependencies ───────────────────────
 header "Installing Python dependencies…"
 info "This may take a minute on first run…"
-"$PYTHON" -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet --upgrade
-success "Dependencies installed"
+
+VENV_DIR="$INSTALL_DIR/.venv"
+"$PYTHON" -m venv "$VENV_DIR"
+VENV_PYTHON="$VENV_DIR/bin/python3"
+"$VENV_PYTHON" -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet --upgrade
+success "Dependencies installed (virtualenv: $VENV_DIR)"
 
 # ── 6. Remove quarantine attribute (macOS Gatekeeper) ────────────────────────
 xattr -rd com.apple.quarantine "$INSTALL_DIR" 2>/dev/null || true
 
-# ── 7. LaunchAgent (auto-start at login) ─────────────────────────────────────
+# ── 7. Create .app bundle in ~/Applications ───────────────────────────────────
+header "Creating application bundle…"
+
+APP_DIR="$HOME/Applications/Claude Limits.app"
+APP_MACOS="$APP_DIR/Contents/MacOS"
+APP_RES="$APP_DIR/Contents/Resources"
+
+mkdir -p "$APP_MACOS" "$APP_RES"
+
+# Launcher executable inside the bundle
+cat > "$APP_MACOS/Claude Limits" <<LAUNCHER_EOF
+#!/usr/bin/env bash
+exec "${VENV_PYTHON}" "${INSTALL_DIR}/widget.py" &>/dev/null &
+LAUNCHER_EOF
+chmod +x "$APP_MACOS/Claude Limits"
+
+# Generate app icon (runs in the venv which already has pyobjc)
+[[ -f "$INSTALL_DIR/generate_icon.py" ]] || \
+    curl -fsSL "$RAW_BASE/generate_icon.py" -o "$INSTALL_DIR/generate_icon.py"
+
+if "$VENV_PYTHON" "$INSTALL_DIR/generate_icon.py" "$APP_RES/AppIcon.icns" 2>/dev/null; then
+    ICON_KEY='<key>CFBundleIconFile</key><string>AppIcon</string>'
+else
+    warn "Icon generation skipped (will use default macOS icon)"
+    ICON_KEY=''
+fi
+
+# Info.plist — LSUIElement hides the dock icon (menu-bar-only app)
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Claude Limits</string>
+  <key>CFBundleDisplayName</key>
+  <string>Claude Limits</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.claude.limits.widget</string>
+  <key>CFBundleVersion</key>
+  <string>1.0</string>
+  <key>CFBundleExecutable</key>
+  <string>Claude Limits</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  ${ICON_KEY}
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
+PLIST_EOF
+
+# Remove quarantine so macOS won't block the bundle on first launch
+xattr -rd com.apple.quarantine "$APP_DIR" 2>/dev/null || true
+
+success "App bundle created: $APP_DIR"
+info  "Open Finder → ~/Applications to add it to your Dock or Launchpad."
+
+# ── 9. LaunchAgent (auto-start at login) ─────────────────────────────────────
 header "Configuring auto-start at login…"
 
 # Stop any existing instance first
@@ -171,7 +236,7 @@ cat > "$PLIST_PATH" <<PLIST_EOF
   <string>${PLIST_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${PYTHON}</string>
+    <string>${VENV_PYTHON}</string>
     <string>${INSTALL_DIR}/widget.py</string>
   </array>
   <key>RunAtLoad</key>
@@ -194,7 +259,7 @@ PLIST_EOF
 launchctl load "$PLIST_PATH" 2>/dev/null || true
 success "Auto-start agent installed (starts at next login)"
 
-# ── 8. Launch widget now ──────────────────────────────────────────────────────
+# ── 10. Launch widget now ─────────────────────────────────────────────────────
 header "Launching widget…"
 
 # Kill any stale instance
@@ -202,7 +267,7 @@ pkill -f "widget.py" 2>/dev/null || true
 sleep 0.5
 
 # Start in background
-"$PYTHON" "$INSTALL_DIR/widget.py" &>/dev/null &
+"$VENV_PYTHON" "$INSTALL_DIR/widget.py" &>/dev/null &
 sleep 1
 
 success "Widget is running!"

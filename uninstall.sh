@@ -14,6 +14,7 @@ PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
 INSTALL_DIR="$HOME/Library/Application Support/ClaudeLimits"
 LOG_DIR="$HOME/Library/Logs/ClaudeLimits"
 PREFS_FILE="$HOME/.claude_limits_config.json"
+APP_BUNDLE="$HOME/Applications/Claude Limits.app"
 
 echo ""
 echo -e "${BOLD}Claude Limits Widget — Uninstaller${RESET}"
@@ -37,6 +38,12 @@ if [[ -f "$PLIST_PATH" ]]; then
     launchctl unload "$PLIST_PATH" 2>/dev/null || true
     rm -f "$PLIST_PATH"
     echo -e "  ${GREEN}✓${RESET} Auto-start agent removed"
+fi
+
+# Remove .app bundle
+if [[ -d "$APP_BUNDLE" ]]; then
+    rm -rf "$APP_BUNDLE"
+    echo -e "  ${GREEN}✓${RESET} App bundle removed: $APP_BUNDLE"
 fi
 
 # Remove app files

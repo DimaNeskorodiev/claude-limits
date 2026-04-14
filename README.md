@@ -47,15 +47,19 @@ curl -fsSL https://raw.githubusercontent.com/DimaNeskorodiev/claude-limits/main/
 The installer will:
 1. Check Python 3.9+
 2. Download the app to `~/Library/Application Support/ClaudeLimits/`
-3. Install Python dependencies (`pyobjc`, `curl_cffi`)
-4. Register a login item so the widget starts automatically
-5. Launch the widget immediately
+3. Create an isolated virtualenv and install Python dependencies (`pyobjc`, `curl_cffi`)
+4. Create **`~/Applications/Claude Limits.app`** — a native app bundle with a custom icon
+5. Register a login item so the widget starts automatically
+6. Launch the widget immediately
 
-**If the widget isn't running** (e.g. after a reboot before first login), start it manually:
+**Starting the widget manually:**
 
-```bash
-python3 ~/Library/Application\ Support/ClaudeLimits/widget.py &
-```
+- **From Finder** — open `~/Applications` and double-click **Claude Limits**
+- **From Spotlight** — press `Cmd + Space`, type *Claude Limits*, hit Enter
+- **From Terminal:**
+  ```bash
+  open ~/Applications/Claude\ Limits.app
+  ```
 
 ---
 
@@ -122,14 +126,20 @@ Claude API and web usage share the same session window. If you're near your 5-ho
 git clone https://github.com/DimaNeskorodiev/claude-limits.git
 cd claude-limits
 
-# Install Python dependencies
-pip3 install -r requirements.txt
+# Run the full installer (creates venv, .app bundle, login agent)
+bash install.sh
+```
+
+Or run directly without installing:
+
+```bash
+# Create a local virtualenv and install dependencies
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
 # Run immediately
 python3 widget.py
-
-# (Optional) Install auto-start at login
-bash install.sh
 ```
 
 ---
@@ -150,7 +160,7 @@ curl -fsSL https://raw.githubusercontent.com/DimaNeskorodiev/claude-limits/main/
 bash ~/Library/Application\ Support/ClaudeLimits/uninstall.sh
 ```
 
-This removes the app files, the login agent, and the logs.
+This removes the app bundle (`~/Applications/Claude Limits.app`), app files, the login agent, and the logs.
 It optionally removes your saved session config.
 
 ---
@@ -159,10 +169,8 @@ It optionally removes your saved session config.
 
 ### Widget doesn't appear in menu bar
 - Make sure you're on macOS 12+
-- Start it manually (no Xcode or extra tools needed — just Python):
-  ```bash
-  python3 ~/Library/Application\ Support/ClaudeLimits/widget.py &
-  ```
+- Launch via Finder (`~/Applications/Claude Limits`) or Spotlight
+- Or from Terminal: `open ~/Applications/Claude\ Limits.app`
 - Check logs: `~/Library/Logs/ClaudeLimits/stderr.log`
 
 ### Shows "—%" or no data
@@ -174,10 +182,17 @@ It optionally removes your saved session config.
 chmod +x install.sh && ./install.sh
 ```
 
+### "externally-managed-environment" error during install
+This happens on Macs with Homebrew Python (PEP 668). The installer handles it automatically by creating an isolated virtualenv. If you see this error, make sure you're running the latest `install.sh`:
+```bash
+curl -fsSL https://raw.githubusercontent.com/DimaNeskorodiev/claude-limits/main/install.sh | bash
+```
+
 ### Dependencies fail to install
 ```bash
-pip3 install --upgrade pip
-pip3 install pyobjc-framework-Cocoa curl_cffi requests
+# Inside the project dir, create a venv manually and install:
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 ---
